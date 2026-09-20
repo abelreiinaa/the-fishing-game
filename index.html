@@ -10,44 +10,40 @@
     <link rel="stylesheet" href="pixel_fishing.css">
 
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
+        import { getAuth, signInAnonymously } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
+        import { getFirestore, doc, getDoc, setDoc } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
 
-        window.firebaseApp = null;
-        window.firebaseDb = null;
-        window.firebaseAuth = null;
-        window.userId = null;
+        // Configuración de tu proyecto Firebase the-fishing-76c54
+        window.pixelFirebaseConfig = {
+            apiKey: "AIzaSyDp3iyutFMZw1wJx29UecO7xqvRgjne-UU",
+            authDomain: "the-fishing-76c54.firebaseapp.com",
+            projectId: "the-fishing-76c54",
+            storageBucket: "the-fishing-76c54.firebasestorage.app",
+            messagingSenderId: "579169185810",
+            appId: "1:579169185810:web:6f1f43d3d3ccb18ce6e8cb",
+            measurementId: "G-E8MJSP1WNK"
+        };
         
-        // Exporting DB methods for game logic
-        window.fsDoc = doc;
-        window.fsGetDoc = getDoc;
-        window.fsSetDoc = setDoc;
-        window.fsOnSnapshot = onSnapshot;
-
-        try {
-            const appId = typeof __app_id !== 'undefined' ? __app_id : 'pixel-fishing';
-            const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-            
-            if (Object.keys(firebaseConfig).length > 0) {
-                window.firebaseApp = initializeApp(firebaseConfig);
-                window.firebaseDb = getFirestore(window.firebaseApp);
-                window.firebaseAuth = getAuth(window.firebaseApp);
-                window.appId = appId;
-                
-                window.initFirebase = async function() {
-                    const auth = window.firebaseAuth;
-                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                        await signInWithCustomToken(auth, __initial_auth_token);
-                    } else {
-                        await signInAnonymously(auth);
-                    }
+        if (Object.keys(window.pixelFirebaseConfig).length) {
+            try {
+                const app = initializeApp(window.pixelFirebaseConfig);
+                const auth = getAuth(app);
+                const db = getFirestore(app);
+                window.pixelCloud = {
+                    auth,
+                    db,
+                    doc,
+                    getDoc,
+                    setDoc,
+                    ready: signInAnonymously(auth)
                 };
+            } catch (error) {
+                console.error('Firebase no disponible:', error);
             }
-        } catch (e) {
-            console.error("Firebase err:", e);
         }
     </script>
+
 </head>
 <body class="w-screen h-[100dvh] relative flex flex-col items-center justify-center">
 
@@ -118,7 +114,7 @@
                 <button id="btnStartGame" class="pixel-btn bg-blue-600">Iniciar Juego</button>
                 <button id="btnOptions" onclick="openMenu('pauseMenu')" class="pixel-btn">Opciones</button>
             </div>
-            <p id="cloudStatus" class="text-xxs text-gray-400 mt-6">Conectando a la nube...</p>
+            <p id="cloudStatus" class="text-xxs text-yellow-300 mt-6">Modo local · guardado en este dispositivo</p>
         </div>
     </div>
 
@@ -447,33 +443,34 @@
         }
 
         async function loadGame() {
-            if (!window.firebaseAuth || !window.firebaseDb || !window.firebaseAuth.currentUser) {
-                const local = localStorage.getItem('pixelFishingSave');
-                if (local) {
-                    state = { ...defaultState, ...JSON.parse(local) };
-                    repairState();
-                }
-                isDataLoaded = true; updateHUD(); return;
+            const local = localStorage.getItem('pixelFishingSave');
+            if (local) {
+                state = { ...defaultState, ...JSON.parse(local) };
+                repairState();
             }
-            const uid = window.firebaseAuth.currentUser.uid; window.userId = uid;
-            try {
-                const docRef = window.fsDoc(window.firebaseDb, 'artifacts', window.appId, 'users', uid, 'game_data', 'save1');
-                const docSnap = await window.fsGetDoc(docRef);
-                if (docSnap.exists()) {
-                    state = { ...defaultState, ...docSnap.data() };
-                    repairState();
-                } else await saveToCloud();
-                
-                window.fsOnSnapshot(docRef, (snapshot) => {
-                    if (snapshot.exists() && isDataLoaded) {
-                        const data = snapshot.data();
-                        if(data.coins > state.coins) state.coins = data.coins;
-                        updateHUD();
+            if (window.pixelCloud) {
+                try {
+                    await Promise.race([
+                        window.pixelCloud.ready,
+                        new Promise(resolve => setTimeout(resolve, 6000))
+                    ]);
+                    if (window.pixelCloud.auth.currentUser) {
+                        const ref = window.pixelCloud.doc(window.pixelCloud.db, 'pixelFishing', window.pixelCloud.auth.currentUser.uid);
+                        const remote = await window.pixelCloud.getDoc(ref);
+                        if (remote.exists()) {
+                            state = { ...defaultState, ...remote.data() };
+                            repairState();
+                            localStorage.setItem('pixelFishingSave', JSON.stringify(state));
+                        }
+                        window.pixelCloudRef = ref;
+                        document.getElementById('cloudStatus').innerText = 'Nube conectada';
                     }
-                }, (error) => console.error("Sync error:", error));
-            } catch(e) { console.error("Load error", e); }
-            
-            isDataLoaded = true; updateHUD();
+                } catch (error) {
+                    console.warn('Se mantiene el guardado local:', error);
+                }
+            }
+            isDataLoaded = true;
+            updateHUD();
         }
 
         function repairState() {
@@ -490,11 +487,9 @@
 
         async function saveToCloud() {
             localStorage.setItem('pixelFishingSave', JSON.stringify(state));
-            if (window.firebaseDb && window.userId && window.fsDoc) {
-                try {
-                    const docRef = window.fsDoc(window.firebaseDb, 'artifacts', window.appId, 'users', window.userId, 'game_data', 'save1');
-                    await window.fsSetDoc(docRef, state);
-                } catch (e) { console.error("Save error:", e); }
+            if (window.pixelCloud && window.pixelCloudRef) {
+                try { await window.pixelCloud.setDoc(window.pixelCloudRef, state); }
+                catch (error) { console.warn('No se pudo guardar en la nube:', error); }
             }
         }
 
@@ -970,11 +965,6 @@
             showToast('Colores restaurados.');
         }
 
-        [['rodColorPicker', 'rod'], ['reelColorPicker', 'reel'], ['lineColorPicker', 'line'], ['bobberColorPicker', 'bobber'], ['waterColorPicker', 'water']]
-            .forEach(([elementId, key]) => {
-                document.getElementById(elementId).addEventListener('input', event => updateCustomization(key, event.target.value));
-            });
-
         window.switchShopTab = function(tab) { playSound('click'); renderShop(tab); }
 
         function renderShop(tab) {
@@ -1010,7 +1000,7 @@
                     <div class="flex flex-col items-end min-w-[60px]">
                         ${isUnlocked ? '<span class="text-green-500 text-xxs">Adquirido</span>' : 
                           `<div class="text-yellow-300 text-xxs mb-1">${item.cost}🪙</div>
-                           <button onclick="buyItem('${tab}', '${item.id}', ${item.cost})" class="pixel-btn text-xxs p-1 ${canAfford?'bg-blue-600':'bg-gray-600'}" ${canAfford?'':'disabled'}>${btnTxt}</button>`
+                           <button onclick="buyItem('${tab}', '${item.id}',${item.cost})" class="pixel-btn text-xxs p-1 ${canAfford?'bg-blue-600':'bg-gray-600'}" ${canAfford?'':'disabled'}>${btnTxt}</button>`
                         }
                     </div>`;
                 content.appendChild(div);
@@ -1161,17 +1151,8 @@
         window.onload = async () => {
             renderScene();
             const cloudTxt = document.getElementById('cloudStatus');
-            if(typeof window.initFirebase === 'function') {
-                try {
-                    await window.initFirebase();
-                    window.firebaseAuth.onAuthStateChanged(user => {
-                        if (user) {
-                            cloudTxt.innerText = "Nube conectada ☁️"; cloudTxt.classList.add('text-green-400');
-                            loadGame();
-                        }
-                    });
-                } catch(e) { cloudTxt.innerText = "Modo Local"; loadGame(); }
-            } else { cloudTxt.innerText = "Modo Local"; loadGame(); }
+            cloudTxt.innerText = window.pixelCloud ? 'Conectando a la nube...' : 'Modo Local · falta configuración Firebase';
+            await loadGame();
         };
 
     </script>
