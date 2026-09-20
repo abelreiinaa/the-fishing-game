@@ -1,0 +1,1179 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Pixel Fishing</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    
+    <link rel="stylesheet" href="pixel_fishing.css">
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        window.firebaseApp = null;
+        window.firebaseDb = null;
+        window.firebaseAuth = null;
+        window.userId = null;
+        
+        // Exporting DB methods for game logic
+        window.fsDoc = doc;
+        window.fsGetDoc = getDoc;
+        window.fsSetDoc = setDoc;
+        window.fsOnSnapshot = onSnapshot;
+
+        try {
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'pixel-fishing';
+            const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+            
+            if (Object.keys(firebaseConfig).length > 0) {
+                window.firebaseApp = initializeApp(firebaseConfig);
+                window.firebaseDb = getFirestore(window.firebaseApp);
+                window.firebaseAuth = getAuth(window.firebaseApp);
+                window.appId = appId;
+                
+                window.initFirebase = async function() {
+                    const auth = window.firebaseAuth;
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                };
+            }
+        } catch (e) {
+            console.error("Firebase err:", e);
+        }
+    </script>
+</head>
+<body class="w-screen h-[100dvh] relative flex flex-col items-center justify-center">
+
+    <div id="toastMessage" class="toast text-xs font-bold text-shadow">¡Mensaje!</div>
+
+    <div id="gameUI" class="absolute inset-0 hidden pointer-events-none">
+        <!-- Top HUD -->
+        <div class="absolute top-4 left-4 right-4 flex justify-between items-start z-10 pointer-events-none">
+            <div class="pixel-panel p-2 flex gap-4 pointer-events-auto items-center">
+                <div class="flex items-center gap-2">
+                    <span class="text-lg pixel-emoji">🪙</span>
+                    <div class="flex flex-col">
+                        <span class="text-xxs text-gray-400">Monedas</span>
+                        <span id="hudCoins" class="text-xs text-yellow-300 text-shadow">0</span>
+                    </div>
+                </div>
+                <div class="w-px h-8 bg-gray-600"></div>
+                <div class="flex items-center gap-2">
+                    <span class="text-lg pixel-emoji">⭐</span>
+                    <div class="flex flex-col">
+                        <span class="text-xxs text-gray-400">Nivel <span id="hudLevel" class="text-white">1</span></span>
+                        <div class="w-20 h-2 bg-black border border-gray-500 mt-1 relative">
+                            <div id="hudXpBar" class="absolute top-0 left-0 h-full bg-blue-500 transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <button onclick="openMenu('pauseMenu')" class="pixel-btn pointer-events-auto bg-gray-800 text-white">MENÚ</button>
+        </div>
+
+        <!-- Action Button -->
+        <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-10">
+            <div id="hookIndicator" class="text-4xl text-red-500 hidden animate-bounce mb-8 pixel-emoji font-bold">¡!</div>
+            <button id="btnFishAction" class="pixel-btn action-btn pointer-events-auto mt-20 opacity-90 hover:opacity-100">
+                LANZAR CAÑA
+            </button>
+            <div class="text-xxs text-gray-300 mt-4 text-shadow">(Espacio o Click)</div>
+            <div id="hudStreak" class="text-xs text-orange-400 mt-2 text-shadow"></div>
+        </div>
+
+        <div id="fightBox" class="absolute inset-x-0 top-1/4 hidden flex-col items-center z-10 pointer-events-none px-4">
+            <div id="fightInfo" class="text-xs text-shadow mb-2"></div>
+            <div class="relative w-full max-w-xs h-8 bg-black border-4 border-gray-500">
+                <div id="fightZone" class="absolute top-0 h-full bg-green-500 opacity-80"></div>
+                <div id="fightMark" class="absolute top-0 h-full w-1 bg-white"></div>
+            </div>
+        </div>
+
+        <!-- Bottom Action Bar -->
+        <div class="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex flex-wrap justify-center max-w-full gap-2 pointer-events-auto z-10">
+            <button onclick="openMenu('inventoryMenu')" class="pixel-btn bg-indigo-700">Mochila</button>
+            <button onclick="openMenu('shopMenu')" class="pixel-btn bg-emerald-700">Tienda</button>
+            <button onclick="openMenu('travelMenu')" class="pixel-btn bg-sky-700">Viajes</button>
+            <button onclick="openMenu('achievementsMenu')" class="pixel-btn bg-amber-600">Logros</button>
+        </div>
+    </div>
+
+    <!-- The Canvas Engine -->
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- Main Menu -->
+    <div id="mainMenu" class="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-50">
+        <div class="pixel-panel p-8 flex flex-col items-center max-w-sm w-full mx-4 text-center">
+            <h1 class="text-xl text-yellow-300 mb-2 leading-relaxed text-shadow">Pixel Fishing</h1>
+            <div id="mainMenuArt" class="mb-6 w-16 h-16 bg-blue-500 border-4 border-white flex items-center justify-center pixel-emoji text-3xl">🐟</div>
+            
+            <div class="flex flex-col gap-4 w-full">
+                <button id="btnStartGame" class="pixel-btn bg-blue-600">Iniciar Juego</button>
+                <button id="btnOptions" onclick="openMenu('pauseMenu')" class="pixel-btn">Opciones</button>
+            </div>
+            <p id="cloudStatus" class="text-xxs text-gray-400 mt-6">Conectando a la nube...</p>
+        </div>
+    </div>
+
+    <!-- Pause Menu -->
+    <div id="pauseMenu" class="modal-overlay absolute inset-0 hidden items-center justify-center z-[60] p-4">
+        <div class="pixel-panel p-6 max-w-sm w-full flex flex-col items-center text-center gap-4">
+            <h2 class="text-lg text-white mb-2 text-shadow">Menú</h2>
+            <button onclick="closeMenu('pauseMenu')" class="pixel-btn bg-blue-600 w-full">Reanudar</button>
+            <button onclick="openMenu('customizeMenu')" class="pixel-btn bg-teal-600 w-full">Personalizar</button>
+            <button onclick="toggleAudio()" id="btnToggleAudio" class="pixel-btn bg-purple-600 w-full">Sonido: ON</button>
+            <button onclick="returnToMainMenu()" class="pixel-btn bg-red-600 w-full mt-4 border-red-800">Salir al Título</button>
+        </div>
+    </div>
+
+    <!-- Visual customization -->
+    <div id="customizeMenu" class="modal-overlay absolute inset-0 hidden items-center justify-center z-[70] p-4">
+        <div class="pixel-panel p-5 max-w-sm w-full flex flex-col gap-3">
+            <div class="flex justify-between items-center border-b-2 border-gray-600 pb-2">
+                <h2 class="text-sm text-teal-300 text-shadow">Personalizar</h2>
+                <button onclick="closeMenu('customizeMenu')" class="pixel-btn bg-red-600 px-2 py-1">X</button>
+            </div>
+            <p class="text-xxs text-gray-400">Cambia el aspecto de tu equipo. Se guarda con tu partida.</p>
+            <label class="color-control">Color de la caña<input id="rodColorPicker" type="color" value="#d6a74b"></label>
+            <label class="color-control">Color del carrete<input id="reelColorPicker" type="color" value="#94a3b8"></label>
+            <label class="color-control">Color de la línea<input id="lineColorPicker" type="color" value="#ffffff"></label>
+            <label class="color-control">Color de la boya<input id="bobberColorPicker" type="color" value="#ef4444"></label>
+            <label class="color-control">Tono del agua
+                <select id="waterColorPicker">
+                    <option value="#4c6a85">Lago</option>
+                    <option value="#1e3a8a">Océano</option>
+                    <option value="#0284c7">Tropical</option>
+                    <option value="#3f6212">Pantano</option>
+                </select>
+            </label>
+            <button onclick="resetCustomization()" class="pixel-btn bg-gray-700 w-full mt-2">Restaurar colores</button>
+        </div>
+    </div>
+
+    <!-- Achievements Menu -->
+    <div id="achievementsMenu" class="modal-overlay absolute inset-0 hidden items-center justify-center z-40 p-4">
+        <div class="pixel-panel p-4 max-w-lg w-full h-[80dvh] flex flex-col">
+            <div class="flex justify-between items-center mb-4 border-b-2 border-gray-600 pb-2">
+                <h2 class="text-sm text-amber-300 text-shadow">Logros</h2>
+                <button onclick="closeMenu('achievementsMenu')" class="pixel-btn bg-red-600 px-2 py-1">X</button>
+            </div>
+            <div id="achievementsContent" class="overflow-y-auto flex-grow flex flex-col gap-2 p-1">
+                <!-- Injected via JS -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Shop Menu -->
+    <div id="shopMenu" class="modal-overlay absolute inset-0 hidden items-center justify-center z-40 p-4">
+        <div class="pixel-panel p-4 max-w-lg w-full h-[80dvh] flex flex-col">
+            <div class="flex justify-between items-center mb-4 border-b-2 border-gray-600 pb-2">
+                <h2 class="text-sm text-emerald-300 text-shadow">Tienda</h2>
+                <button onclick="closeMenu('shopMenu')" class="pixel-btn bg-red-600 px-2 py-1">X</button>
+            </div>
+            <div class="text-xs mb-3 text-shadow">Fondos: <span class="text-yellow-300" id="shopCoins">0</span> 🪙</div>
+            
+            <div class="flex mb-2 text-xs gap-1">
+                <button onclick="switchShopTab('baits')" id="tab-baits" class="flex-1 pixel-btn bg-emerald-700 border-white">Cebos</button>
+                <button onclick="switchShopTab('rods')" id="tab-rods" class="flex-1 pixel-btn bg-gray-800">Cañas</button>
+                <button onclick="switchShopTab('vehicles')" id="tab-vehicles" class="flex-1 pixel-btn bg-gray-800">Vehículos</button>
+            </div>
+            
+            <div id="shopContent" class="overflow-y-auto flex-grow flex flex-col gap-2 p-1">
+                <!-- Injected via JS -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Travel Menu -->
+    <div id="travelMenu" class="modal-overlay absolute inset-0 hidden items-center justify-center z-40 p-4">
+        <div class="pixel-panel p-4 max-w-lg w-full h-[80dvh] flex flex-col">
+            <div class="flex justify-between items-center mb-4 border-b-2 border-gray-600 pb-2">
+                <h2 class="text-sm text-sky-300 text-shadow">Viajes y Rutas</h2>
+                <button onclick="closeMenu('travelMenu')" class="pixel-btn bg-red-600 px-2 py-1">X</button>
+            </div>
+            <div class="text-xxs text-gray-300 mb-2">Vehículo actual: <span id="currentTravelVeh" class="text-yellow-300 font-bold">Orilla</span></div>
+            <div class="text-xxs text-gray-400 mb-4">(Cambia tu vehículo en la Mochila para ver más rutas)</div>
+            
+            <div id="travelContent" class="overflow-y-auto flex-grow flex flex-col gap-3 p-1">
+                <!-- Injected via JS -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Inventory Menu -->
+    <div id="inventoryMenu" class="modal-overlay absolute inset-0 hidden items-center justify-center z-40 p-4">
+        <div class="pixel-panel p-4 max-w-lg w-full h-[80dvh] flex flex-col">
+            <div class="flex justify-between items-center mb-4 border-b-2 border-gray-600 pb-2">
+                <h2 class="text-sm text-indigo-300 text-shadow">Mochila</h2>
+                <button onclick="closeMenu('inventoryMenu')" class="pixel-btn bg-red-600 px-2 py-1">X</button>
+            </div>
+            
+            <div class="bg-[#111] p-3 border-2 border-gray-600 mb-4 text-xs">
+                <div class="mb-2">🛶 Vehículo: <span id="invVeh" class="text-sky-300">A pie</span></div>
+                <div class="mb-2">🎣 Caña: <span id="invRod" class="text-emerald-300">Bambú</span></div>
+                <div>🐛 Cebo: <span id="invBait" class="text-yellow-300">Ninguno</span></div>
+            </div>
+
+            <div class="overflow-y-auto flex-grow pr-2">
+                <h3 class="text-xs mb-2 text-gray-400 border-b border-gray-700 pb-1">Vehículo de Transporte:</h3>
+                <div id="inventoryVehiclesContent" class="flex flex-wrap gap-2 mb-4"></div>
+
+                <h3 class="text-xs mb-2 text-gray-400 border-b border-gray-700 pb-1">Cañas Desbloqueadas:</h3>
+                <div id="inventoryRodsContent" class="flex flex-wrap gap-2 mb-4"></div>
+
+                <h3 class="text-xs mb-2 text-gray-400 border-b border-gray-700 pb-1">Cebos Disponibles:</h3>
+                <div id="inventoryBaitsContent" class="flex flex-wrap gap-2 mb-4"></div>
+                
+                <h3 class="text-xs mb-2 text-gray-400 border-b border-gray-700 pb-1 mt-4">Tus Capturas:</h3>
+                <div id="inventoryFishContent" class="grid grid-cols-3 sm:grid-cols-4 gap-2 bg-[#111] border-2 border-gray-600 p-2">
+                    <!-- Injected via JS -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Catch Popup -->
+    <div id="catchPopup" class="modal-overlay absolute inset-0 hidden items-center justify-center z-[60] p-4">
+        <div class="pixel-panel p-6 max-w-sm w-full flex flex-col items-center text-center animate-bounce" id="catchPopupContent">
+            <h2 class="text-xs mb-4 text-white text-shadow" id="catchTitle">¡Captura Exitosa!</h2>
+            <img id="catchIcon" class="w-24 h-24 mb-4" style="image-rendering: pixelated;" src="" alt="Pez">
+            <h3 class="text-base mb-2 text-shadow" id="catchName">Pez</h3>
+            <p class="text-xxs mb-4" id="catchRarity">Común</p>
+            <div class="flex gap-4 text-xs mb-6 bg-[#111] p-3 border-2 border-gray-600 shadow-inner">
+                <div class="text-yellow-300">+<span id="catchCoins">0</span> 🪙</div>
+                <div class="text-blue-300">+<span id="catchXp">0</span> XP</div>
+            </div>
+            <button onclick="closeCatchPopup()" class="pixel-btn bg-emerald-600 w-full text-sm">Guardar (Espacio)</button>
+        </div>
+    </div>
+
+    <script>
+        const GAME_DATA = {
+            rarities: {
+                COMMON: { id: 'COMMON', name: 'Común', class: 'rarity-common' },
+                RARE: { id: 'RARE', name: 'Raro', class: 'rarity-rare' },
+                EPIC: { id: 'EPIC', name: 'Épico', class: 'rarity-epic' },
+                LEGENDARY: { id: 'LEGENDARY', name: 'Legendario', class: 'rarity-legendary' }
+            },
+            baits: {
+                none: { id: 'none', name: 'Sin Cebo', icon: '❌', cost: 0, tier: 0 },
+                bread: { id: 'bread', name: 'Miga de Pan', icon: '🍞', cost: 20, tier: 1, desc: 'Atrae Raros. Da 5 usos.' },
+                worm: { id: 'worm', name: 'Gusano', icon: '🐛', cost: 80, tier: 2, desc: 'Atrae Épicos. Da 5 usos.' },
+                octopus: { id: 'octopus', name: 'Pulpito', icon: '🦑', cost: 300, tier: 3, desc: 'Para Legendarios. Da 5 usos.' }
+            },
+            rods: {
+                bamboo: { id: 'bamboo', name: 'Caña Bambú', cost: 0, waitMult: 1.0, catchWindow: 1200, desc: 'Básica.', color: '#d6a74b' },
+                fiber: { id: 'fiber', name: 'Caña Fibra', cost: 500, waitMult: 0.7, catchWindow: 1800, desc: 'Pican antes. Tiempo de reacción medio.', color: '#e2e8f0' },
+                carbon: { id: 'carbon', name: 'Caña Carbono', cost: 2000, waitMult: 0.5, catchWindow: 2500, desc: 'Muy rápida. Máximo tiempo de reacción.', color: '#334155' }
+            },
+            vehicles: {
+                orilla: { id: 'orilla', name: 'A pie (Orilla)', cost: 0, icon: '🏕️', desc: 'Pesca básica desde tierra firme.' },
+                bote: { id: 'bote', name: 'Bote de Madera', cost: 800, icon: '🛶', desc: 'Permite remar hacia lagos y pantanos.' },
+                barco: { id: 'barco', name: 'Barco Pesquero', cost: 3000, icon: '🚢', desc: 'Diseñado para alta mar y viajes largos.' }
+            },
+            locations: {
+                orilla: { id: 'orilla', name: 'Muelle Local', reqVeh: 'orilla', desc: 'Tranquilo y seguro para empezar.' },
+                pantano: { id: 'pantano', name: 'Pantano Oscuro', reqVeh: 'bote', desc: 'Aguas turbias, peces resbaladizos.' },
+                profundas: { id: 'profundas', name: 'Aguas Profundas', reqVeh: 'bote', desc: 'Alejado de la costa. Buena pesca.' },
+                noruega: { id: 'noruega', name: 'Fiordos Noruegos', reqVeh: 'barco', desc: 'Aguas heladas llenas de salmón.' },
+                tropico: { id: 'tropico', name: 'Arrecife Tropical', reqVeh: 'barco', desc: 'Peces exóticos bajo el sol.' }
+            },
+            achievements: [
+                { id: 'a1', name: 'Principiante', desc: 'Pesca 10 peces en total', req: 10, type: 'fish', reward: 50 },
+                { id: 'a2', name: 'Pescador Local', desc: 'Pesca 50 peces en total', req: 50, type: 'fish', reward: 200 },
+                { id: 'a3', name: 'Lobo de Mar', desc: 'Pesca 200 peces en total', req: 200, type: 'fish', reward: 1000 },
+                { id: 'a4', name: 'Nivel 5', desc: 'Alcanza el nivel 5', req: 5, type: 'level', reward: 150 },
+                { id: 'a5', name: 'Maestro Pescador', desc: 'Alcanza el nivel 10', req: 10, type: 'level', reward: 500 },
+                { id: 'a6', name: 'Suerte Azul', desc: 'Pesca 1 pez Raro', req: 1, type: 'rare', reward: 100 },
+                { id: 'a7', name: 'Pesca Épica', desc: 'Pesca 1 pez Épico', req: 1, type: 'epic', reward: 300 },
+                { id: 'a8', name: 'Leyenda Viva', desc: 'Pesca 1 pez Legendario', req: 1, type: 'legendary', reward: 1000 }
+            ],
+            fishes: [
+                // Orilla
+                { id: 'f1', name: 'Sardina', loc: 'orilla', rarity: 'COMMON', val: 2, xp: 5, pat: 'sardine', c1: '#8ba6b5', c2: '#cbd5e1', minTier: 0 },
+                { id: 'f2', name: 'Pez Sol', loc: 'orilla', rarity: 'COMMON', val: 3, xp: 8, pat: 'fat', c1: '#d97736', c2: '#eab308', minTier: 0 },
+                { id: 'f3', name: 'Trucha', loc: 'orilla', rarity: 'RARE', val: 12, xp: 20, pat: 'long', c1: '#4d7c5c', c2: '#a3c2b0', minTier: 1 },
+                { id: 'f4', name: 'Carpa Koi', loc: 'orilla', rarity: 'EPIC', val: 40, xp: 60, pat: 'fat', c1: '#ef4444', c2: '#fff', minTier: 2 },
+                { id: 'f5', name: 'Rana Dorada', loc: 'orilla', rarity: 'LEGENDARY', val: 150, xp: 300, pat: 'sardine', c1: '#fbbf24', c2: '#fef08a', minTier: 3 },
+                // Pantano (Requiere Bote)
+                { id: 'f6', name: 'Perca', loc: 'pantano', rarity: 'COMMON', val: 4, xp: 10, pat: 'fat', c1: '#65a30d', c2: '#bef264', minTier: 0 },
+                { id: 'f7', name: 'Pez Gato', loc: 'pantano', rarity: 'RARE', val: 18, xp: 30, pat: 'long', c1: '#52525b', c2: '#a1a1aa', minTier: 1 },
+                { id: 'f8', name: 'Bagre', loc: 'pantano', rarity: 'EPIC', val: 60, xp: 90, pat: 'epic', c1: '#3f3f46', c2: '#71717a', minTier: 2 },
+                { id: 'f9', name: 'Monstruo Fango', loc: 'pantano', rarity: 'LEGENDARY', val: 250, xp: 500, pat: 'epic', c1: '#064e3b', c2: '#34d399', minTier: 3 },
+                // Aguas Profundas (Requiere Bote)
+                { id: 'f10', name: 'Jurel', loc: 'profundas', rarity: 'COMMON', val: 5, xp: 12, pat: 'sardine', c1: '#3b82f6', c2: '#93c5fd', minTier: 0 },
+                { id: 'f11', name: 'Lucio', loc: 'profundas', rarity: 'RARE', val: 20, xp: 35, pat: 'long', c1: '#3f624d', c2: '#7c9a87', minTier: 1 },
+                { id: 'f12', name: 'Atún', loc: 'profundas', rarity: 'EPIC', val: 80, xp: 120, pat: 'fat', c1: '#1d4ed8', c2: '#60a5fa', minTier: 2 },
+                { id: 'f13', name: 'Calamar Gigante', loc: 'profundas', rarity: 'LEGENDARY', val: 300, xp: 600, pat: 'epic', c1: '#be123c', c2: '#fb7185', minTier: 3 },
+                // Noruega (Requiere Barco)
+                { id: 'f14', name: 'Arenque', loc: 'noruega', rarity: 'COMMON', val: 8, xp: 15, pat: 'sardine', c1: '#64748b', c2: '#94a3b8', minTier: 0 },
+                { id: 'f15', name: 'Bacalao', loc: 'noruega', rarity: 'RARE', val: 30, xp: 45, pat: 'fat', c1: '#78716c', c2: '#d6d3d1', minTier: 1 },
+                { id: 'f16', name: 'Salmón', loc: 'noruega', rarity: 'EPIC', val: 100, xp: 150, pat: 'long', c1: '#f43f5e', c2: '#fda4af', minTier: 2 },
+                { id: 'f17', name: 'Leviatán Helado', loc: 'noruega', rarity: 'LEGENDARY', val: 500, xp: 1000, pat: 'epic', c1: '#38bdf8', c2: '#e0f2fe', minTier: 3 },
+                // Tropico (Requiere Barco)
+                { id: 'f18', name: 'Pez Payaso', loc: 'tropico', rarity: 'COMMON', val: 10, xp: 20, pat: 'fat', c1: '#ea580c', c2: '#fff', minTier: 0 },
+                { id: 'f19', name: 'Mahi Mahi', loc: 'tropico', rarity: 'RARE', val: 35, xp: 55, pat: 'long', c1: '#10b981', c2: '#fde047', minTier: 1 },
+                { id: 'f20', name: 'Pez Espada', loc: 'tropico', rarity: 'EPIC', val: 120, xp: 200, pat: 'long', c1: '#0284c7', c2: '#7dd3fc', minTier: 2 },
+                { id: 'f21', name: 'Kraken', loc: 'tropico', rarity: 'LEGENDARY', val: 600, xp: 1200, pat: 'epic', c1: '#7e22ce', c2: '#d8b4fe', minTier: 3 }
+            ]
+        };
+
+        const FISH_PATTERNS = {
+            sardine: ["   111      ","  12221    1"," 1222221  12"," 12892211121","  12221    1","   111      "],
+            fat: ["   1111     ","  122221   1"," 12222221 12"," 12892222112"," 133333331 1","  1111111   "],
+            long: ["    111       ","   12221      ","  1222221111 1"," 1228922222212","  1333333333 1","   111111111  "],
+            epic: ["    1       ","   121  1   ","  12221121  "," 12892222211","  13333332 1","   111221   ","      11    "]
+        };
+
+        function generateFishSprite(patternName, colorMain, colorAlt) {
+            const pattern = FISH_PATTERNS[patternName] || FISH_PATTERNS.sardine;
+            const c = document.createElement('canvas');
+            c.width = pattern[0].length; c.height = pattern.length;
+            const ctx = c.getContext('2d');
+            for(let y=0; y<pattern.length; y++) {
+                for(let x=0; x<pattern[y].length; x++) {
+                    const char = pattern[y][x];
+                    if (char === '1') ctx.fillStyle = '#111'; // Border
+                    else if (char === '2') ctx.fillStyle = colorMain;
+                    else if (char === '3') ctx.fillStyle = colorAlt;
+                    else if (char === '8') ctx.fillStyle = '#fff'; // Eye white
+                    else if (char === '9') ctx.fillStyle = '#000'; // Pupil
+                    else continue;
+                    ctx.fillRect(x, y, 1, 1);
+                }
+            }
+            return c.toDataURL();
+        }
+
+        GAME_DATA.fishes.forEach(f => f.spriteData = generateFishSprite(f.pat, f.c1, f.c2));
+
+        const defaultState = {
+            coins: 0, level: 1, xp: 0, totalCaught: 0,
+            caughtRare: 0, caughtEpic: 0, caughtLegendary: 0,
+            streak: 0, bestStreak: 0, records: {}, lastDaily: '', dayStreak: 0,
+            currentBait: 'none', currentRod: 'bamboo', currentVehicle: 'orilla', currentLocation: 'orilla',
+            unlockedRods: ['bamboo'], unlockedVehicles: ['orilla'], unlockedLocations: ['orilla'],
+            baitCounts: {}, inventory: {},
+            notifiedAchievements: [], claimedAchievements: [],
+            customization: {
+                rod: '#d6a74b', reel: '#94a3b8', line: '#ffffff', bobber: '#ef4444', water: '#4c6a85'
+            }
+        };
+
+        let state = JSON.parse(JSON.stringify(defaultState));
+        let isDataLoaded = false;
+        let fState = 'IDLE'; 
+        let hookTimer = null; let missedTimer = null; let thrownBait = 'none';
+
+        // --- Audio System ---
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        let actx; let isAudioEnabled = true; let ambientGain = null;
+
+        function initAudio() {
+            if (!isAudioEnabled) return;
+            if (!actx) {
+                actx = new AudioContext();
+                createAmbientNoise();
+            }
+            if (actx.state === 'suspended') actx.resume();
+        }
+
+        function playTone(freq, type, duration, vol = 0.1, sweep = false) {
+            if (!isAudioEnabled || !actx) return;
+            const osc = actx.createOscillator(); const gain = actx.createGain();
+            osc.type = type;
+            if (sweep) {
+                osc.frequency.setValueAtTime(freq, actx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(freq * 2, actx.currentTime + duration);
+            } else { osc.frequency.setValueAtTime(freq, actx.currentTime); }
+            gain.gain.setValueAtTime(vol, actx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, actx.currentTime + duration);
+            osc.connect(gain); gain.connect(actx.destination);
+            osc.start(); osc.stop(actx.currentTime + duration);
+        }
+
+        function createAmbientNoise() {
+            if(!actx) return;
+            const bufferSize = actx.sampleRate * 2;
+            const buffer = actx.createBuffer(1, bufferSize, actx.sampleRate);
+            const output = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) output[i] = Math.random() * 2 - 1;
+            const noise = actx.createBufferSource(); noise.buffer = buffer; noise.loop = true;
+            const filter = actx.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = 300;
+            ambientGain = actx.createGain(); ambientGain.gain.value = 0.02; // Very quiet background
+            noise.connect(filter); filter.connect(ambientGain); ambientGain.connect(actx.destination);
+            noise.start();
+        }
+
+        function modulateAmbient(isFishing) {
+            if(ambientGain && actx) ambientGain.gain.setTargetAtTime(isFishing ? 0.05 : 0.02, actx.currentTime, 0.5);
+        }
+
+        function playSound(name) {
+            initAudio();
+            switch(name) {
+                case 'click': playTone(400, 'square', 0.1, 0.05); break;
+                case 'cast': playTone(250, 'sine', 0.4, 0.1, true); break;
+                case 'splash': 
+                    if(actx) {
+                        const osc = actx.createOscillator(); const g = actx.createGain();
+                        osc.type = 'square'; osc.frequency.setValueAtTime(100, actx.currentTime);
+                        osc.frequency.exponentialRampToValueAtTime(10, actx.currentTime + 0.3);
+                        g.gain.setValueAtTime(0.3, actx.currentTime); g.gain.exponentialRampToValueAtTime(0.01, actx.currentTime + 0.3);
+                        osc.connect(g); g.connect(actx.destination);
+                        osc.start(); osc.stop(actx.currentTime + 0.3);
+                    } break;
+                case 'alert': playTone(880, 'square', 0.1, 0.1); setTimeout(()=>playTone(1200, 'square', 0.15, 0.1), 100); break;
+                case 'error': playTone(150, 'sawtooth', 0.4, 0.1); break;
+                case 'catch_common': playTone(500, 'square', 0.2); break;
+                case 'catch_rare': playTone(600, 'square', 0.1); setTimeout(()=>playTone(800, 'square', 0.2), 100); break;
+                case 'catch_epic': playTone(600, 'square', 0.1); setTimeout(()=>playTone(800, 'square', 0.1), 100); setTimeout(()=>playTone(1200, 'square', 0.3), 200); break;
+                case 'catch_legendary': playTone(800, 'sine', 0.1); setTimeout(()=>playTone(1000, 'sine', 0.1), 100); setTimeout(()=>playTone(1200, 'sine', 0.1), 200); setTimeout(()=>playTone(1600, 'sine', 0.5), 300); break;
+            }
+        }
+
+        window.toggleAudio = function() {
+            isAudioEnabled = !isAudioEnabled;
+            if(isAudioEnabled) initAudio(); else if(actx) actx.suspend();
+            document.getElementById('btnToggleAudio').innerText = `Sonido: ${isAudioEnabled ? 'ON' : 'OFF'}`;
+            playSound('click');
+        }
+
+        async function loadGame() {
+            if (!window.firebaseAuth || !window.firebaseDb || !window.firebaseAuth.currentUser) {
+                const local = localStorage.getItem('pixelFishingSave');
+                if (local) {
+                    state = { ...defaultState, ...JSON.parse(local) };
+                    repairState();
+                }
+                isDataLoaded = true; updateHUD(); return;
+            }
+            const uid = window.firebaseAuth.currentUser.uid; window.userId = uid;
+            try {
+                const docRef = window.fsDoc(window.firebaseDb, 'artifacts', window.appId, 'users', uid, 'game_data', 'save1');
+                const docSnap = await window.fsGetDoc(docRef);
+                if (docSnap.exists()) {
+                    state = { ...defaultState, ...docSnap.data() };
+                    repairState();
+                } else await saveToCloud();
+                
+                window.fsOnSnapshot(docRef, (snapshot) => {
+                    if (snapshot.exists() && isDataLoaded) {
+                        const data = snapshot.data();
+                        if(data.coins > state.coins) state.coins = data.coins;
+                        updateHUD();
+                    }
+                }, (error) => console.error("Sync error:", error));
+            } catch(e) { console.error("Load error", e); }
+            
+            isDataLoaded = true; updateHUD();
+        }
+
+        function repairState() {
+            if(!state.notifiedAchievements) state.notifiedAchievements = [];
+            if(!state.claimedAchievements) state.claimedAchievements = [];
+            if(!state.unlockedVehicles) state.unlockedVehicles = ['orilla'];
+            if(!state.currentVehicle) state.currentVehicle = 'orilla';
+            if(state.caughtRare === undefined) state.caughtRare = 0;
+            if(state.caughtEpic === undefined) state.caughtEpic = 0;
+            if(state.caughtLegendary === undefined) state.caughtLegendary = 0;
+            if(!state.records) state.records = {};
+            state.customization = { ...defaultState.customization, ...(state.customization || {}) };
+        }
+
+        async function saveToCloud() {
+            localStorage.setItem('pixelFishingSave', JSON.stringify(state));
+            if (window.firebaseDb && window.userId && window.fsDoc) {
+                try {
+                    const docRef = window.fsDoc(window.firebaseDb, 'artifacts', window.appId, 'users', window.userId, 'game_data', 'save1');
+                    await window.fsSetDoc(docRef, state);
+                } catch (e) { console.error("Save error:", e); }
+            }
+        }
+
+        const cvs = document.getElementById('gameCanvas');
+        const ctx = cvs.getContext('2d', { alpha: false });
+        const WIDTH = 320; const HEIGHT = 180;
+        cvs.width = WIDTH; cvs.height = HEIGHT;
+        ctx.imageSmoothingEnabled = false;
+
+        let globalTime = 0;
+
+        function renderScene() {
+            globalTime += 0.02; // Very slow time for relaxing feel
+            const l = state.currentLocation;
+            const v = state.currentVehicle;
+            
+            // Sky
+            if(l === 'noruega') {
+                ctx.fillStyle = '#64748b'; ctx.fillRect(0, 0, WIDTH, 30);
+                ctx.fillStyle = '#94a3b8'; ctx.fillRect(0, 30, WIDTH, 30);
+                ctx.fillStyle = '#cbd5e1'; ctx.fillRect(0, 60, WIDTH, 30);
+            } else if (l === 'tropico') {
+                ctx.fillStyle = '#0ea5e9'; ctx.fillRect(0, 0, WIDTH, 30);
+                ctx.fillStyle = '#38bdf8'; ctx.fillRect(0, 30, WIDTH, 30);
+                ctx.fillStyle = '#7dd3fc'; ctx.fillRect(0, 60, WIDTH, 30);
+                // Sun
+                ctx.fillStyle = '#fef08a'; ctx.fillRect(200, 20, 20, 20);
+            } else if (l === 'pantano') {
+                ctx.fillStyle = '#3f3f46'; ctx.fillRect(0, 0, WIDTH, 30);
+                ctx.fillStyle = '#52525b'; ctx.fillRect(0, 30, WIDTH, 30);
+                ctx.fillStyle = '#71717a'; ctx.fillRect(0, 60, WIDTH, 30);
+            } else { // Orilla / Profundas (Sunset)
+                ctx.fillStyle = '#5b537d'; ctx.fillRect(0, 0, WIDTH, 20);
+                ctx.fillStyle = '#755d82'; ctx.fillRect(0, 20, WIDTH, 20);
+                ctx.fillStyle = '#9b7285'; ctx.fillRect(0, 40, WIDTH, 20);
+                ctx.fillStyle = '#c3877b'; ctx.fillRect(0, 60, WIDTH, 15);
+                ctx.fillStyle = '#d69c73'; ctx.fillRect(0, 75, WIDTH, 15);
+                // Sun
+                ctx.fillStyle = '#fceea5'; ctx.fillRect(60, 50, 16, 16);
+            }
+
+            // Clouds (Slow)
+            ctx.fillStyle = (l === 'pantano') ? '#52525b' : '#fff';
+            ctx.globalAlpha = 0.5;
+            let cloudX = (globalTime * 1) % (WIDTH + 100) - 50;
+            ctx.fillRect(cloudX, 30, 40, 6); ctx.fillRect(cloudX + 10, 26, 20, 4);
+            ctx.globalAlpha = 1.0;
+
+            // Background Terrain
+            if(l === 'noruega') {
+                ctx.fillStyle = '#e2e8f0'; // Snowy mountains
+                ctx.beginPath(); ctx.moveTo(0, 90); ctx.lineTo(80, 30); ctx.lineTo(150, 90); 
+                ctx.lineTo(250, 20); ctx.lineTo(WIDTH, 90); ctx.fill();
+            } else if (l === 'tropico') {
+                // Far Island
+                ctx.fillStyle = '#fcd34d'; ctx.beginPath(); ctx.arc(100, 90, 40, Math.PI, 0); ctx.fill();
+                ctx.fillStyle = '#15803d'; ctx.fillRect(95, 60, 10, 30); // Palm trunk
+                ctx.beginPath(); ctx.arc(100, 60, 20, 0, Math.PI*2); ctx.fill(); // Leaves
+            } else if (l === 'pantano') {
+                ctx.fillStyle = '#27272a'; // Dark silhouette
+                ctx.beginPath(); ctx.moveTo(0, 90); ctx.lineTo(50, 60); ctx.lineTo(120, 90); ctx.fill();
+                // Dead trees
+                ctx.fillStyle = '#18181b';
+                for(let i=10; i<100; i+=20) { ctx.fillRect(i, 60+(i%10), 4, 30); ctx.fillRect(i-5, 70+(i%10), 10, 2); }
+            } else if (l === 'orilla') {
+                // Sunset Mountains & Pines
+                ctx.fillStyle = '#5b6276';
+                ctx.beginPath(); ctx.moveTo(0, 90); ctx.lineTo(60, 50); ctx.lineTo(120, 70); 
+                ctx.lineTo(220, 40); ctx.lineTo(WIDTH, 90); ctx.fill();
+                ctx.fillStyle = '#3a4d46';
+                for(let i = 0; i < WIDTH; i += 15) {
+                    let h = 15 + Math.sin(i)*10;
+                    ctx.fillRect(i + 2, 90 - h, 3, h); ctx.fillRect(i, 90 - h + 5, 7, 10);
+                }
+            }
+
+            // Water
+            let waterColor = state.customization.water || '#4c6a85';
+            if(l === 'noruega' || l === 'profundas') waterColor = '#1e3a8a';
+            if(l === 'tropico' || l === 'pantano') waterColor = state.customization.water;
+            ctx.fillStyle = waterColor;
+            ctx.fillRect(0, 90, WIDTH, HEIGHT - 90);
+
+            // Water Ripples (Slow Sine Waves)
+            const numRipples = 15;
+            for(let i=0; i<numRipples; i++) {
+                let wy = 92 + i*6;
+                let offset = Math.sin(globalTime + i) * 5;
+                ctx.fillStyle = 'rgba(255,255,255,0.1)';
+                ctx.fillRect((i*20 + globalTime*10)%WIDTH + offset, wy, 20 + i*2, 2);
+            }
+
+            // Foreground Vehicle
+            if (v === 'orilla') {
+                // Isometric Pier from bottom left
+                ctx.fillStyle = '#3e2723'; ctx.beginPath(); ctx.moveTo(0, HEIGHT); ctx.lineTo(0, 140); ctx.lineTo(100, 110); ctx.lineTo(180, HEIGHT); ctx.fill();
+                ctx.fillStyle = '#4e342e'; ctx.fillRect(0, 140, 100, 2); // Border
+                ctx.fillStyle = '#261410'; // Planks
+                ctx.fillRect(0, 145, 110, 1); ctx.fillRect(0, 155, 130, 2); ctx.fillRect(0, 170, 160, 2);
+                // Posts
+                ctx.fillStyle = '#1e110d'; ctx.fillRect(80, 100, 10, 30); ctx.fillRect(20, 120, 10, 35);
+            } else if (v === 'bote') {
+                // Wooden Boat interior
+                ctx.fillStyle = '#6b4c3a'; ctx.beginPath(); ctx.moveTo(0, HEIGHT); ctx.lineTo(40, 150); ctx.lineTo(280, 150); ctx.lineTo(WIDTH, HEIGHT); ctx.fill();
+                ctx.fillStyle = '#4a3528'; ctx.fillRect(40, 150, 240, 4);
+                for(let px=60; px<280; px+=50) { ctx.fillStyle = '#3a271d'; ctx.fillRect(px, 154, 3, 30); }
+            } else if (v === 'barco') {
+                // Metal Fishing Ship
+                ctx.fillStyle = '#475569'; ctx.beginPath(); ctx.moveTo(0, HEIGHT); ctx.lineTo(20, 140); ctx.lineTo(300, 140); ctx.lineTo(WIDTH, HEIGHT); ctx.fill();
+                ctx.fillStyle = '#94a3b8'; ctx.fillRect(0, 120, WIDTH, 5); // Railing
+                for(let px=20; px<WIDTH; px+=60) ctx.fillRect(px, 125, 5, 15);
+            }
+
+            // Hands & Fishing Rod (Very calm idle movement)
+            let breathY = (fState === 'IDLE' || fState === 'WAITING') ? Math.sin(globalTime) * 1.5 : 0;
+            
+            let rodColor = state.customization.rod || GAME_DATA.rods[state.currentRod].color;
+            let rodStartX = 280; let rodStartY = 190 + breathY;
+            let rodTipX = 160; let rodTipY = 60 + breathY;
+            
+            if(fState === 'HOOKED') {
+                rodTipY = 120 + Math.sin(globalTime*50)*8;
+                rodTipX = 140 + Math.random()*5; // Violent shake
+            } else if (fState === 'WAITING') {
+                rodTipY += 10;
+            }
+
+            // Draw segmented rod (Thick to thin)
+            let segments = 5;
+            let prevX = rodStartX; let prevY = rodStartY;
+            for(let i=1; i<=segments; i++) {
+                let t = i/segments;
+                // Bezier curve interpolation for bend
+                let cpX = rodStartX - 30; let cpY = rodTipY + 40;
+                let curX = (1-t)*(1-t)*rodStartX + 2*(1-t)*t*cpX + t*t*rodTipX;
+                let curY = (1-t)*(1-t)*rodStartY + 2*(1-t)*t*cpY + t*t*rodTipY;
+                
+                ctx.lineWidth = 10 - (t*8); ctx.strokeStyle = '#111'; // Border
+                ctx.beginPath(); ctx.moveTo(prevX, prevY); ctx.lineTo(curX, curY); ctx.stroke();
+                ctx.lineWidth = 8 - (t*8); ctx.strokeStyle = rodColor; // Inside
+                ctx.beginPath(); ctx.moveTo(prevX, prevY); ctx.lineTo(curX, curY); ctx.stroke();
+                ctx.lineWidth = Math.max(1, 2 - (t * 1.5)); ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+                ctx.beginPath(); ctx.moveTo(prevX - 1, prevY - 1); ctx.lineTo(curX - 1, curY - 1); ctx.stroke();
+                
+                // Draw Ring
+                if(i < segments) {
+                    ctx.fillStyle = '#fff'; ctx.fillRect(curX-2, curY-2, 4-(t*2), 6-(t*2));
+                }
+                prevX = curX; prevY = curY;
+            }
+
+            // Reel (Carrete)
+            let reelX = rodStartX - 20; let reelY = rodStartY - 10;
+            ctx.fillStyle = '#333'; ctx.fillRect(reelX-10, reelY-10, 20, 25);
+            ctx.fillStyle = state.customization.reel; ctx.beginPath(); ctx.arc(reelX, reelY, 12, 0, Math.PI*2); ctx.fill();
+            if(fState === 'HOOKED') { // Spinning reel
+                ctx.fillStyle = '#111';
+                let spinX = reelX + Math.cos(globalTime*40)*8; let spinY = reelY + Math.sin(globalTime*40)*8;
+                ctx.beginPath(); ctx.arc(spinX, spinY, 4, 0, Math.PI*2); ctx.fill();
+            }
+
+            // Line & Bobber
+            if (fState !== 'IDLE') {
+                let bobX = 110; let bobY = 110;
+                if(fState === 'HOOKED') {
+                    bobY += 6; bobX += Math.sin(globalTime*60)*3;
+                    ctx.fillStyle = '#fff'; ctx.fillRect(bobX-8, bobY, 16, 3); // Splash
+                }
+
+                ctx.lineWidth = 1; ctx.strokeStyle = state.customization.line;
+                ctx.beginPath(); ctx.moveTo(rodTipX, rodTipY); ctx.lineTo(bobX, bobY); ctx.stroke();
+
+                // Boya más detallada
+                ctx.fillStyle = '#fbbf24'; ctx.fillRect(bobX-1, bobY-7, 2, 3); // Antena
+                ctx.fillStyle = '#111'; ctx.fillRect(bobX-1, bobY-4, 2, 2);    // Franja negra
+                ctx.fillStyle = state.customization.bobber; ctx.fillRect(bobX-3, bobY-2, 6, 4); // Cuerpo superior de la boya
+                ctx.fillStyle = '#fff'; ctx.fillRect(bobX-3, bobY+2, 6, 4);    // Cuerpo inferior blanco
+                ctx.fillStyle = '#111'; ctx.fillRect(bobX-2, bobY+6, 4, 1);    // Base
+                ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.fillRect(bobX-2, bobY-1, 2, 2); // Brillo
+
+            } else {
+                // Line hanging down
+                let hangX = rodTipX; let hangY = rodTipY + 40;
+                ctx.lineWidth = 1; ctx.strokeStyle = state.customization.line;
+                ctx.beginPath(); ctx.moveTo(rodTipX, rodTipY); ctx.lineTo(hangX, hangY); ctx.stroke();
+                
+                // Draw bait emoji & hook
+                ctx.strokeStyle = '#999'; ctx.beginPath(); ctx.arc(hangX, hangY, 4, 0, Math.PI, true); ctx.stroke();
+                if(state.currentBait !== 'none' && GAME_DATA.baits[state.currentBait]) {
+                    ctx.font = '12px Arial'; ctx.textAlign = 'center';
+                    ctx.fillText(GAME_DATA.baits[state.currentBait].icon, hangX, hangY+10);
+                }
+            }
+
+            // Hands (Gloves)
+            let handY = 140 + breathY;
+            
+            // Piel (Brazos)
+            ctx.fillStyle = '#dcb394'; ctx.beginPath(); ctx.moveTo(270, 200+breathY); ctx.lineTo(200, HEIGHT); ctx.lineTo(WIDTH, HEIGHT); ctx.fill();
+            ctx.fillStyle = '#dfaf8a'; ctx.beginPath(); ctx.moveTo(220, 200+breathY); ctx.lineTo(160, HEIGHT); ctx.lineTo(200, HEIGHT); ctx.fill();
+
+            // Guante Izquierdo (sosteniendo carrete)
+            ctx.fillStyle = '#3e2723'; 
+            ctx.fillRect(210, handY+8, 24, 28); 
+            ctx.fillStyle = '#4e342e'; 
+            ctx.fillRect(212, handY+10, 20, 10);
+            ctx.fillStyle = '#261410'; 
+            ctx.fillRect(215, handY+10, 2, 25); 
+            // Dedos rodeando el carrete
+            ctx.fillStyle = '#4e342e';
+            ctx.fillRect(230, handY+14, 12, 6); 
+            ctx.fillRect(230, handY+22, 10, 6); 
+            
+            // Guante Derecho (sosteniendo caña)
+            ctx.fillStyle = '#3e2723'; 
+            ctx.fillRect(250, handY+28, 30, 24); 
+            // Pulgar
+            ctx.fillStyle = '#4e342e';
+            ctx.fillRect(245, handY+28, 8, 12);
+            // Resto de dedos
+            ctx.fillRect(255, handY+25, 20, 8);
+            ctx.fillStyle = '#261410';
+            ctx.fillRect(260, handY+25, 2, 8); ctx.fillRect(267, handY+25, 2, 8);
+
+            requestAnimationFrame(renderScene);
+        }
+
+        const btnFishAction = document.getElementById('btnFishAction');
+        const hookIndicator = document.getElementById('hookIndicator');
+
+        function triggerFishingAction() {
+            if (!document.getElementById('mainMenu').classList.contains('hidden') ||
+                Array.from(document.querySelectorAll('.modal-overlay')).some(m => !m.classList.contains('hidden') && m.id !== 'catchPopup')) {
+                return;
+            }
+
+            initAudio();
+
+            if (fState === 'FIGHT') { fightTap(); return; }
+
+            if (fState === 'IDLE') {
+                thrownBait = state.currentBait;
+                if (state.currentBait !== 'none') {
+                    if (state.baitCounts[state.currentBait] > 0) {
+                        state.baitCounts[state.currentBait]--;
+                        if (state.baitCounts[state.currentBait] <= 0) {
+                            state.currentBait = 'none'; showToast("Cebo agotado.");
+                        }
+                    } else { state.currentBait = 'none'; thrownBait = 'none'; }
+                }
+                updateHUD(); fState = 'WAITING';
+                playSound('cast'); modulateAmbient(true);
+                
+                btnFishAction.innerText = 'ESPERANDO...'; btnFishAction.disabled = true; btnFishAction.classList.remove('action-btn');
+                
+                const rod = GAME_DATA.rods[state.currentRod];
+                const waitTime = (Math.random() * 6000 + 4000) * rod.waitMult; // Slower wait time
+                
+                hookTimer = setTimeout(() => {
+                    fState = 'HOOKED';
+                    playSound('splash'); playSound('alert');
+                    hookIndicator.classList.remove('hidden');
+                    btnFishAction.disabled = false; btnFishAction.innerText = '¡TIRAR!'; btnFishAction.classList.add('action-btn', 'bite');
+                    
+                    missedTimer = setTimeout(() => {
+                        if (fState === 'HOOKED') { resetFishing(); state.streak = 0; updateHUD(); playSound('error'); showToast("El pez se escapó..."); }
+                    }, rod.catchWindow);
+                }, waitTime);
+
+            } else if (fState === 'HOOKED') {
+                clearTimeout(missedTimer);
+                
+                const possible = GAME_DATA.fishes.filter(f => f.loc === state.currentLocation && GAME_DATA.baits[thrownBait].tier >= f.minTier);
+                let caught = possible[0]; 
+                if (possible.length > 0) {
+                    let roll = Math.random();
+                    let targetR = 'COMMON';
+                    if(roll > 0.98) targetR = 'LEGENDARY';
+                    else if(roll > 0.90) targetR = 'EPIC';
+                    else if(roll > 0.65) targetR = 'RARE';
+                    let filtered = possible.filter(f => f.rarity === targetR);
+                    if(filtered.length === 0) filtered = possible;
+                    caught = filtered[Math.floor(Math.random() * filtered.length)];
+                }
+                
+                startFight(caught);
+            }
+        }
+
+        let fight = null;
+        function newFightZone() {
+            fight.zs = 5 + Math.random() * (90 - fight.zone);
+            const z = document.getElementById('fightZone');
+            z.style.left = fight.zs + '%'; z.style.width = fight.zone + '%';
+            document.getElementById('fightInfo').innerText = `¡RECOGE! ${fight.got}/${fight.need}`;
+        }
+        function fightLoop(t) {
+            if (!fight) return;
+            const dt = Math.min(50, t - (fight.last || t)); fight.last = t;
+            fight.pos += fight.dir * fight.speed * dt / 16.7;
+            if (fight.pos >= 100) { fight.pos = 100; fight.dir = -1; }
+            if (fight.pos <= 0) { fight.pos = 0; fight.dir = 1; }
+            document.getElementById('fightMark').style.left = fight.pos + '%';
+            requestAnimationFrame(fightLoop);
+        }
+        function startFight(fish) {
+            const n = { COMMON: 1, RARE: 2, EPIC: 3, LEGENDARY: 4 }[fish.rarity];
+            fight = { fish, need: n, got: 0, pos: 0, dir: 1, speed: 0.8 + n * 0.3, zone: 36 - n * 4 + GAME_DATA.rods[state.currentRod].catchWindow / 300 };
+            fState = 'FIGHT';
+            hookIndicator.classList.add('hidden');
+            btnFishAction.classList.remove('bite'); btnFishAction.innerText = '¡RECOGER!';
+            const b = document.getElementById('fightBox'); b.classList.remove('hidden'); b.classList.add('flex');
+            newFightZone(); requestAnimationFrame(fightLoop);
+        }
+        function endFight() {
+            fight = null;
+            const b = document.getElementById('fightBox'); b.classList.add('hidden'); b.classList.remove('flex');
+        }
+        function fightTap() {
+            const f = fight; if (!f) return;
+            if (f.pos >= f.zs && f.pos <= f.zs + f.zone) {
+                f.got++; playSound('alert');
+                if (f.got >= f.need) { endFight(); resetFishing(); processCatch(f.fish); }
+                else newFightZone();
+            } else {
+                endFight(); resetFishing(); state.streak = 0; updateHUD();
+                playSound('error'); showToast('¡Se soltó el pez!');
+            }
+        }
+
+        function resetFishing() {
+            fState = 'IDLE';
+            hookIndicator.classList.add('hidden');
+            btnFishAction.innerText = 'LANZAR CAÑA';
+            btnFishAction.classList.remove('bite'); btnFishAction.classList.add('action-btn'); btnFishAction.disabled = false;
+            modulateAmbient(false);
+        }
+
+        btnFishAction.addEventListener('click', triggerFishingAction);
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') {
+                e.preventDefault();
+                const popup = document.getElementById('catchPopup');
+                if (!popup.classList.contains('hidden')) closeCatchPopup();
+                else triggerFishingAction();
+            }
+        });
+
+        function checkAchievements() {
+            GAME_DATA.achievements.forEach(a => {
+                if(!state.notifiedAchievements.includes(a.id)) {
+                    let conditionMet = false;
+                    if(a.type === 'fish' && state.totalCaught >= a.req) conditionMet = true;
+                    if(a.type === 'level' && state.level >= a.req) conditionMet = true;
+                    if(a.type === 'rare' && state.caughtRare >= a.req) conditionMet = true;
+                    if(a.type === 'epic' && state.caughtEpic >= a.req) conditionMet = true;
+                    if(a.type === 'legendary' && state.caughtLegendary >= a.req) conditionMet = true;
+
+                    if(conditionMet) {
+                        state.notifiedAchievements.push(a.id);
+                        showToast(`🏆 ¡Logro Desbloqueado: ${a.name}!`);
+                        playSound('alert');
+                        saveToCloud();
+                    }
+                }
+            });
+        }
+
+        window.claimAchievement = function(id) {
+            const a = GAME_DATA.achievements.find(x => x.id === id);
+            if(a && state.notifiedAchievements.includes(id) && !state.claimedAchievements.includes(id)) {
+                state.claimedAchievements.push(id);
+                state.coins += a.reward;
+                playSound('click'); showToast(`+${a.reward} 🪙`);
+                saveToCloud(); renderAchievements(); updateHUD();
+            }
+        }
+
+        function processCatch(fish) {
+            playSound(`catch_${fish.rarity.toLowerCase()}`);
+            const kg = +(0.7 + Math.random() * 0.8).toFixed(1);
+            state.streak++; if (state.streak > state.bestStreak) state.bestStreak = state.streak;
+            const mult = 1 + Math.min(state.streak - 1, 10) * 0.1;
+            const coins = Math.round(fish.val * kg * mult);
+            const isRecord = kg > (state.records[fish.id] || 0);
+            if (isRecord) state.records[fish.id] = kg;
+            state.totalCaught++; state.coins += coins;
+            state.inventory[fish.id] = (state.inventory[fish.id] || 0) + 1;
+            
+            if (fish.rarity === 'RARE') state.caughtRare++;
+            if (fish.rarity === 'EPIC') state.caughtEpic++;
+            if (fish.rarity === 'LEGENDARY') state.caughtLegendary++;
+
+            state.xp += fish.xp;
+            let nextXpReq = state.level * 100;
+            while(state.xp >= nextXpReq) {
+                state.xp -= nextXpReq; state.level++; state.coins += 50; 
+                nextXpReq = state.level * 100;
+                showToast(`¡Nivel Subió a ${state.level}! (+50🪙)`);
+                playSound('alert');
+            }
+            
+            checkAchievements();
+            saveToCloud();
+            
+            const rData = GAME_DATA.rarities[fish.rarity];
+            document.getElementById('catchIcon').src = fish.spriteData;
+            document.getElementById('catchName').innerText = fish.name;
+            document.getElementById('catchName').className = `text-base mb-2 text-shadow ${rData.class}`;
+            document.getElementById('catchRarity').innerText = `${rData.name} · ${kg}kg${isRecord ? ' · ¡RÉCORD!' : ''}`;
+            document.getElementById('catchTitle').innerText = state.streak > 1 ? `¡Racha x${state.streak}! +${Math.round((mult - 1) * 100)}%` : '¡Captura Exitosa!';
+            document.getElementById('catchRarity').className = `text-xxs mb-4 ${rData.class}`;
+            document.getElementById('catchCoins').innerText = coins;
+            document.getElementById('catchXp').innerText = fish.xp;
+            
+            document.getElementById('catchPopup').classList.remove('hidden'); document.getElementById('catchPopup').classList.add('flex');
+            document.getElementById('btnFishAction').parentElement.classList.add('hidden');
+        }
+
+        window.closeCatchPopup = function() {
+            playSound('click');
+            document.getElementById('catchPopup').classList.add('hidden'); document.getElementById('catchPopup').classList.remove('flex');
+            document.getElementById('btnFishAction').parentElement.classList.remove('hidden');
+            updateHUD();
+        }
+
+        function updateHUD() {
+            document.getElementById('hudCoins').innerText = state.coins;
+            document.getElementById('hudStreak').innerText = state.streak > 1 ? `🔥 Racha x${state.streak} (+${Math.min((state.streak - 1) * 10, 100)}%)` : '';
+            document.getElementById('hudLevel').innerText = state.level;
+            document.getElementById('hudXpBar').style.width = Math.min(100, (state.xp / (state.level * 100)) * 100) + '%';
+        }
+
+        let toastTID;
+        function showToast(msg) {
+            const t = document.getElementById('toastMessage'); t.innerText = msg; t.classList.add('show');
+            clearTimeout(toastTID); toastTID = setTimeout(() => t.classList.remove('show'), 3000);
+        }
+
+        window.openMenu = function(id) {
+            playSound('click');
+            document.getElementById(id).classList.remove('hidden'); document.getElementById(id).classList.add('flex');
+            if(id === 'shopMenu') renderShop('baits');
+            if(id === 'inventoryMenu') renderInventory();
+            if(id === 'travelMenu') renderTravel();
+            if(id === 'achievementsMenu') renderAchievements();
+            if(id === 'customizeMenu') renderCustomization();
+        }
+        window.closeMenu = function(id) {
+            playSound('click');
+            document.getElementById(id).classList.add('hidden'); document.getElementById(id).classList.remove('flex');
+            updateHUD(); saveToCloud();
+        }
+
+        function renderCustomization() {
+            const customization = state.customization;
+            document.getElementById('rodColorPicker').value = customization.rod;
+            document.getElementById('reelColorPicker').value = customization.reel;
+            document.getElementById('lineColorPicker').value = customization.line;
+            document.getElementById('bobberColorPicker').value = customization.bobber;
+            document.getElementById('waterColorPicker').value = customization.water;
+        }
+
+        function updateCustomization(key, value) {
+            state.customization[key] = value;
+            saveToCloud();
+        }
+
+        window.resetCustomization = function() {
+            state.customization = { ...defaultState.customization };
+            renderCustomization();
+            saveToCloud();
+            showToast('Colores restaurados.');
+        }
+
+        [['rodColorPicker', 'rod'], ['reelColorPicker', 'reel'], ['lineColorPicker', 'line'], ['bobberColorPicker', 'bobber'], ['waterColorPicker', 'water']]
+            .forEach(([elementId, key]) => {
+                document.getElementById(elementId).addEventListener('input', event => updateCustomization(key, event.target.value));
+            });
+
+        window.switchShopTab = function(tab) { playSound('click'); renderShop(tab); }
+
+        function renderShop(tab) {
+            ['baits', 'rods', 'vehicles'].forEach(t => {
+                const btn = document.getElementById(`tab-${t}`);
+                if(t === tab) {
+                    btn.classList.add('bg-emerald-700', 'border-white');
+                    btn.classList.remove('bg-gray-800');
+                } else {
+                    btn.classList.add('bg-gray-800');
+                    btn.classList.remove('bg-emerald-700', 'border-white');
+                }
+            });
+            document.getElementById('shopCoins').innerText = state.coins;
+            const content = document.getElementById('shopContent'); content.innerHTML = '';
+            
+            const items = GAME_DATA[tab];
+            Object.values(items).forEach(item => {
+                if(item.id === 'none') return;
+                let isUnlocked = false; let btnTxt = 'Comprar';
+                if (tab === 'baits') btnTxt = 'Comprar (x5)';
+                else if (tab === 'rods') isUnlocked = state.unlockedRods.includes(item.id);
+                else if (tab === 'vehicles') isUnlocked = state.unlockedVehicles.includes(item.id);
+
+                const canAfford = state.coins >= item.cost;
+                const div = document.createElement('div');
+                div.className = 'bg-[#111] border-2 border-gray-600 p-2 flex justify-between items-center';
+                div.innerHTML = `
+                    <div class="flex-1 pr-2">
+                        <div class="text-xs text-white">${item.icon || '🎣'} ${item.name}</div>
+                        <div class="text-xxs text-gray-400 mt-1">${item.desc}</div>
+                    </div>
+                    <div class="flex flex-col items-end min-w-[60px]">
+                        ${isUnlocked ? '<span class="text-green-500 text-xxs">Adquirido</span>' : 
+                          `<div class="text-yellow-300 text-xxs mb-1">${item.cost}🪙</div>
+                           <button onclick="buyItem('${tab}', '${item.id}', ${item.cost})" class="pixel-btn text-xxs p-1 ${canAfford?'bg-blue-600':'bg-gray-600'}" ${canAfford?'':'disabled'}>${btnTxt}</button>`
+                        }
+                    </div>`;
+                content.appendChild(div);
+            });
+        }
+
+        window.buyItem = function(cat, id, cost) {
+            if(state.coins >= cost) {
+                state.coins -= cost; playSound('click');
+                if (cat === 'baits') { state.baitCounts[id] = (state.baitCounts[id] || 0) + 5; showToast(`+5 ${GAME_DATA.baits[id].name}`); } 
+                else if (cat === 'rods') { state.unlockedRods.push(id); equipItem('rods', id); }
+                else if (cat === 'vehicles') { state.unlockedVehicles.push(id); equipItem('vehicles', id); }
+                saveToCloud(); renderShop(cat);
+            }
+        }
+
+        function renderTravel() {
+            document.getElementById('currentTravelVeh').innerText = GAME_DATA.vehicles[state.currentVehicle].name;
+            const content = document.getElementById('travelContent'); content.innerHTML = '';
+
+            Object.values(GAME_DATA.locations).forEach(loc => {
+                if(loc.reqVeh !== state.currentVehicle) return; // Only show locations for current vehicle
+                const isEquipped = state.currentLocation === loc.id;
+
+                const div = document.createElement('div');
+                div.className = `border-2 p-3 flex flex-col gap-2 ${isEquipped ? 'bg-sky-900 border-sky-400' : 'bg-[#111] border-gray-600'}`;
+                
+                div.innerHTML = `
+                    <div class="text-sm text-white font-bold text-shadow">🗺️ ${loc.name}</div>
+                    <div class="text-xs text-gray-400 mb-1">${loc.desc}</div>
+                    <div class="mt-auto">
+                        ${isEquipped ? '<span class="text-green-400 text-xs font-bold text-shadow">¡ESTÁS AQUÍ!</span>' : 
+                          `<button onclick="equipItem('locations', '${loc.id}')" class="pixel-btn bg-sky-600 text-xs py-2 w-full">Viajar a Zona</button>`}
+                    </div>`;
+                content.appendChild(div);
+            });
+            if(content.innerHTML === '') content.innerHTML = '<div class="text-xs text-gray-400 text-center mt-4">No hay más rutas para este vehículo.</div>';
+        }
+
+        function renderAchievements() {
+            const content = document.getElementById('achievementsContent'); content.innerHTML = '';
+            GAME_DATA.achievements.forEach(a => {
+                const isNotified = state.notifiedAchievements.includes(a.id);
+                const isClaimed = state.claimedAchievements.includes(a.id);
+                
+                let prog = 0;
+                if(a.type === 'fish') prog = state.totalCaught;
+                else if(a.type === 'level') prog = state.level;
+                else if(a.type === 'rare') prog = state.caughtRare;
+                else if(a.type === 'epic') prog = state.caughtEpic;
+                else if(a.type === 'legendary') prog = state.caughtLegendary;
+                
+                const div = document.createElement('div');
+                div.className = `border-2 p-3 mb-2 flex justify-between items-center ${isClaimed ? 'bg-green-900/30 border-green-800' : 'bg-[#111] border-gray-600'}`;
+                
+                div.innerHTML = `
+                    <div class="flex-1">
+                        <div class="text-xs font-bold ${isClaimed ? 'text-green-400' : 'text-white'}">${a.name}</div>
+                        <div class="text-xxs text-gray-400 mt-1">${a.desc}</div>
+                        <div class="text-xxs text-blue-300 mt-1">Progreso: ${Math.min(prog, a.req)} / ${a.req}</div>
+                    </div>
+                    <div>
+                        ${isClaimed ? '<span class="text-green-500 text-xs font-bold">Completado</span>' : 
+                          isNotified ? `<button onclick="claimAchievement('${a.id}')" class="pixel-btn bg-amber-600 text-xs p-2">+${a.reward}🪙 Reclamar</button>` : 
+                          `<div class="text-gray-500 text-xs">${a.reward}🪙</div>`
+                        }
+                    </div>`;
+                content.appendChild(div);
+            });
+        }
+
+        window.equipItem = function(cat, id) {
+            playSound('click');
+            if(cat === 'baits') state.currentBait = id;
+            if(cat === 'rods') state.currentRod = id;
+            if(cat === 'locations') { state.currentLocation = id; renderTravel(); }
+            if(cat === 'vehicles') { 
+                state.currentVehicle = id; 
+                // Reset location to default for that vehicle
+                const defaultLoc = Object.values(GAME_DATA.locations).find(l => l.reqVeh === id);
+                if(defaultLoc) state.currentLocation = defaultLoc.id;
+                renderInventory(); 
+            }
+            saveToCloud(); updateHUD();
+        }
+
+        function renderInventory() {
+            document.getElementById('invVeh').innerText = GAME_DATA.vehicles[state.currentVehicle].name;
+            document.getElementById('invRod').innerText = GAME_DATA.rods[state.currentRod].name;
+            document.getElementById('invBait').innerText = state.currentBait === 'none' ? 'Ninguno' : `${GAME_DATA.baits[state.currentBait].name} (x${state.baitCounts[state.currentBait]})`;
+
+            const vCont = document.getElementById('inventoryVehiclesContent'); vCont.innerHTML = '';
+            state.unlockedVehicles.forEach(vId => {
+                const v = GAME_DATA.vehicles[vId];
+                vCont.innerHTML += `<button onclick="equipItem('vehicles', '${vId}')" class="pixel-btn text-xxs ${state.currentVehicle===vId?'bg-yellow-600':'bg-gray-700'}">${v.icon} ${v.name}</button>`;
+            });
+
+            const rCont = document.getElementById('inventoryRodsContent'); rCont.innerHTML = '';
+            state.unlockedRods.forEach(rId => {
+                rCont.innerHTML += `<button onclick="equipItem('rods', '${rId}')" class="pixel-btn text-xxs ${state.currentRod===rId?'bg-yellow-600':'bg-gray-600'}">${GAME_DATA.rods[rId].name}</button>`;
+            });
+
+            const bCont = document.getElementById('inventoryBaitsContent');
+            bCont.innerHTML = `<button onclick="equipItem('baits', 'none')" class="pixel-btn text-xxs ${state.currentBait==='none'?'bg-yellow-600':'bg-gray-700'}">❌ Quitar</button>`;
+            Object.keys(state.baitCounts).forEach(bId => {
+                if(state.baitCounts[bId] > 0) {
+                    const b = GAME_DATA.baits[bId];
+                    bCont.innerHTML += `<button onclick="equipItem('baits', '${bId}')" class="pixel-btn text-xxs ${state.currentBait===bId?'bg-yellow-600':'bg-indigo-600'}">${b.icon} ${b.name} (x${state.baitCounts[bId]})</button>`;
+                }
+            });
+
+            const fCont = document.getElementById('inventoryFishContent'); fCont.innerHTML = '';
+            GAME_DATA.fishes.forEach(f => {
+                const count = state.inventory[f.id] || 0;
+                if(count > 0) {
+                    const r = GAME_DATA.rarities[f.rarity];
+                    fCont.innerHTML += `
+                        <div class="border border-gray-700 p-2 text-center flex flex-col items-center">
+                            <img src="${f.spriteData}" class="w-10 h-10" style="image-rendering: pixelated;">
+                            <div class="text-xxs ${r.class} mt-1 text-shadow truncate w-full">${f.name}</div>
+                            <div class="text-xxs text-white">x${count}</div>
+                        </div>`;
+                }
+            });
+        }
+
+        window.returnToMainMenu = function() {
+            playSound('click'); closeMenu('pauseMenu');
+            document.getElementById('gameUI').classList.add('hidden'); document.getElementById('mainMenu').classList.remove('hidden'); document.getElementById('mainMenu').classList.add('flex');
+            modulateAmbient(false); if(actx) actx.suspend(); 
+        }
+
+        document.getElementById('btnStartGame').addEventListener('click', () => {
+            initAudio(); playSound('click');
+            document.getElementById('mainMenu').classList.add('hidden'); document.getElementById('mainMenu').classList.remove('flex');
+            document.getElementById('gameUI').classList.remove('hidden');
+            const today = new Date().toDateString();
+            if (state.lastDaily !== today) {
+                state.dayStreak = state.lastDaily === new Date(Date.now() - 864e5).toDateString() ? state.dayStreak + 1 : 1;
+                state.lastDaily = today;
+                const reward = 50 * Math.min(state.dayStreak, 7);
+                state.coins += reward; saveToCloud();
+                showToast(`🎁 Regalo diario día ${state.dayStreak}: +${reward} 🪙`);
+            }
+            updateHUD();
+        });
+
+        window.onload = async () => {
+            renderScene();
+            const cloudTxt = document.getElementById('cloudStatus');
+            if(typeof window.initFirebase === 'function') {
+                try {
+                    await window.initFirebase();
+                    window.firebaseAuth.onAuthStateChanged(user => {
+                        if (user) {
+                            cloudTxt.innerText = "Nube conectada ☁️"; cloudTxt.classList.add('text-green-400');
+                            loadGame();
+                        }
+                    });
+                } catch(e) { cloudTxt.innerText = "Modo Local"; loadGame(); }
+            } else { cloudTxt.innerText = "Modo Local"; loadGame(); }
+        };
+
+    </script>
+</body>
+</html>

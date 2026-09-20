@@ -1,0 +1,156 @@
+:root {
+    --col-common: #9ca3af;
+    --col-rare: #60a5fa;
+    --col-epic: #c084fc;
+    --col-legendary: #fbbf24;
+}
+
+body {
+    font-family: 'Press Start 2P', monospace;
+    background-color: #000;
+    color: #fff;
+    margin: 0;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+}
+
+#gameCanvas {
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    display: block;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    object-fit: cover;
+}
+
+.pixel-panel {
+    background-color: rgba(20, 20, 30, 0.95);
+    border: 4px solid #4a4a6a;
+    box-shadow: inset -4px -4px 0 rgba(0, 0, 0, 0.5), 8px 8px 0 rgba(0, 0, 0, 0.8);
+    image-rendering: pixelated;
+}
+
+.pixel-btn {
+    background-color: #5b6276;
+    color: #fff;
+    border: 4px solid #2a2a3a;
+    box-shadow: inset -4px -4px 0 rgba(0, 0, 0, 0.3), 4px 4px 0 #111;
+    padding: 12px 16px;
+    text-transform: uppercase;
+    font-size: 10px;
+    cursor: pointer;
+    transition: transform 0.1s;
+}
+
+.pixel-btn:active:not(:disabled) {
+    transform: translate(4px, 4px);
+    box-shadow: inset 4px 4px 0 rgba(0, 0, 0, 0.3), 0 0 0 #111;
+}
+
+.pixel-btn:disabled {
+    background-color: #3b3b4f;
+    color: #6b6b7f;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+.pixel-btn.action-btn {
+    background-color: #3b82f6;
+    border-color: #1d4ed8;
+    font-size: 14px;
+}
+
+.pixel-btn.action-btn.bite {
+    background-color: #ef4444;
+    border-color: #991b1b;
+    animation: pulse-red 0.5s infinite;
+}
+
+@keyframes pulse-red {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+    100% { transform: scale(1); }
+}
+
+.text-xxs { font-size: 0.5rem; line-height: 1rem; }
+.text-xs { font-size: 0.65rem; line-height: 1.2rem; }
+.text-shadow { text-shadow: 2px 2px 0 #000; }
+.rarity-common { color: var(--col-common); }
+.rarity-rare { color: var(--col-rare); }
+.rarity-epic { color: var(--col-epic); }
+.rarity-legendary { color: var(--col-legendary); text-shadow: 0 0 10px rgba(251, 191, 36, 0.5), 2px 2px 0 #000; }
+
+.modal-overlay {
+    background: rgba(15, 15, 25, 0.85);
+    backdrop-filter: blur(4px);
+}
+
+.pixel-emoji {
+    text-shadow: -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000;
+}
+
+.toast {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.9);
+    color: #fff;
+    padding: 12px 24px;
+    border: 2px solid #fff;
+    z-index: 1000;
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+    text-align: center;
+}
+
+.toast.show { opacity: 1; }
+
+.color-control {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 12px;
+    background: #111;
+    border: 2px solid #4b5563;
+    padding: 10px;
+    color: #d1d5db;
+    font-size: 0.6rem;
+}
+
+.color-control input[type='color'] {
+    width: 42px;
+    height: 30px;
+    padding: 2px;
+    border: 2px solid #fff;
+    background: #000;
+    cursor: pointer;
+}
+
+.color-control select {
+    min-width: 118px;
+    padding: 7px;
+    border: 2px solid #6b7280;
+    background: #1f2937;
+    color: #fff;
+    font: inherit;
+    font-size: 0.55rem;
+}
+
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: #111; }
+::-webkit-scrollbar-thumb { background: #5b6276; border: 1px solid #000; }
+
+@media (max-width: 600px) {
+    .pixel-btn { padding: 10px 8px; font-size: 8px; }
+    .pixel-btn.action-btn { font-size: 11px; }
+}
+
+@media (orientation: portrait) {
+    #gameCanvas { object-fit: contain; }
+}
