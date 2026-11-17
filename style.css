@@ -154,3 +154,16 @@ body {
 @media (orientation: portrait) {
     #gameCanvas { object-fit: contain; }
 }
+
+/* --- Mejoras de accesibilidad y táctil --- */
+.overflow-y-auto { touch-action: pan-y; }
+
+.pixel-btn:focus-visible {
+    outline: 3px solid var(--col-legendary);
+    outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .animate-bounce,
+    .pixel-btn.action-btn.bite { animation: none; }
+}
